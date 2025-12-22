@@ -7,10 +7,10 @@ import datetime
 # ------------------------------------------------------------------------------------
 # --- CONFIGURATION ---
 # ------------------------------------------------------------------------------------
-BOT_TOKEN = ""
-MONITOR_CHANNEL_ID = ##Discord Channel ID##
-GAME_KEYWORDS = ["LOAP", "Life of a Peasant"]
-CHECK_INTERVAL_SECONDS = 30
+BOT_TOKEN = "" ## Set your bot token
+MONITOR_CHANNEL_ID = ## Discord Channel ID
+GAME_KEYWORDS = ["LOAP", "Life of a Peasant"] ## Game keywords the bot looks for
+CHECK_INTERVAL_SECONDS = 30 ## 30 seconds is the recommended fastest time to check for lobbys
 # ------------------------------------------------------------------------------------
 
 # --- BOT SETUP ---
@@ -84,11 +84,11 @@ async def monitor_game_lobbies():
         game = current_hosted_games[game_id]
 
         message_content = (
-            f"🎮 **A LOAP is being hosted!** <@&1364041405919526962>\n" ## Adjust Name of hosted lobby ##
-            f"> **Name:** {game['name']}\n"
-            f"> **Host:** {game['host']}\n"
-            f"> **Slots:** {game['slots']}\n"
-            f"> **Last updated:** {discord_timestamp()}"
+            f"🎮 **A LOAP is being hosted!** <@&1364041405919526962>\n" ## Adjust Name of hosted lobby
+            f"> **Name:** {game['name']}\n" ## Name of lobby hosted
+            f"> **Host:** {game['host']}\n" ## Will show hosts battlenet name
+            f"> **Slots:** {game['slots']}\n" ## How many slots are taken and available
+            f"> **Last updated:** {discord_timestamp()}" ## Timestamp of when the bot has last ran its checks
         )
 
         new_message = await channel.send(message_content)
@@ -98,7 +98,7 @@ async def monitor_game_lobbies():
             "details": game
         }
 
-    # --- Step 5: Update ongoing games ---
+    # --- Step 4: Update ongoing games ---
     ongoing_game_ids = announced_game_ids.intersection(current_game_ids)
 
     for game_id in ongoing_game_ids:
@@ -107,12 +107,11 @@ async def monitor_game_lobbies():
         message_to_update = stored["message"]
 
         new_content = (
-            f"🎮 **A LOAP is being hosted!** <@&1364041405919526962>\n" ## Adjust name of Discord Lobby ##
-            f"> **Name:** {game_details['name']}\n"
-            f"> **Host:** {game_details['host']}\n"
-            f"> **Slots:** {game_details['slots']}\n"
-            f"> **Last updated:** {discord_timestamp()}\n"
-            f"> ***Courtesy of Roark Productions***"
+            f"🎮 **A LOAP is being hosted!** <@&1364041405919526962>\n"  ## Adjust Name of hosted lobby
+            f"> **Name:** {game_details['name']}\n" ## Name of lobby hosted
+            f"> **Host:** {game_details['host']}\n" ## Will show hosts battlenet name
+            f"> **Slots:** {game_details['slots']}\n" ## How many slots are taken and available
+            f"> **Last updated:** {discord_timestamp()}\n" ## Timestamp of when the bot has last ran its checks
         )
 
         if message_to_update.content != new_content:
@@ -120,7 +119,7 @@ async def monitor_game_lobbies():
 
         announced_games[game_id]["details"] = game_details
 
-    # --- Step 6: Mark games that ended ---
+    # --- Step 5: Mark games that ended ---
     no_longer_hosted_ids = announced_game_ids - current_game_ids
 
     for game_id in no_longer_hosted_ids:
@@ -129,11 +128,10 @@ async def monitor_game_lobbies():
         game_details = stored["details"]
 
         ended_content = (
-            f"❌ **This LOAP is no longer being hosted.**\n"
-            f"> **Name:** {game_details['name']}\n"
-            f"> **Host:** {game_details['host']}\n"
-            f"> **Last updated:** {discord_timestamp()}\n"
-            f"> ***Courtesy of Roark Productions***"
+            f"❌ **This LOAP is no longer being hosted.**\n" ## Adjust Name of hosted lobby
+            f"> **Name:** {game_details['name']}\n" ## Name of lobby hosted
+            f"> **Host:** {game_details['host']}\n" ## Will show hosts battlenet name
+            f"> **Last updated:** {discord_timestamp()}\n" ## Timestamp of when the bot has last ran its checks
         )
 
         await message_to_update.edit(content=ended_content)
@@ -143,3 +141,4 @@ async def monitor_game_lobbies():
 
 # --- RUN THE BOT ---
 bot.run(BOT_TOKEN)
+
