@@ -3,53 +3,72 @@ import discord
 import requests
 from discord.ext import commands, tasks
 import datetime
+import asyncio
 
 # ------------------------------------------------------------------------------------
 # --- CONFIGURATION ---
 # ------------------------------------------------------------------------------------
-BOT_TOKEN = "" ## Set your bot token
-MONITOR_CHANNEL_ID = ## Discord Channel ID
-GAME_KEYWORDS = ["LOAP", "Life of a Peasant"] ## Game keywords the bot looks for
-CHECK_INTERVAL_SECONDS = 30 ## 30 seconds is the recommended fastest time to check for lobbys
+BOT_TOKEN = "" ## Bot token from discord
+MONITOR_CHANNEL_ID =  ## Channel ID where you want it to post in discord  
+GAME_KEYWORDS = [""] ## Game Keywords
+CHECK_INTERVAL_SECONDS = 30 ## Default is 30 seconds and it is recommended
 # ------------------------------------------------------------------------------------
 
-# --- BOT SETUP ---
 intents = discord.Intents.default()
+intents.message_content = True 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Format:
-# announced_games = {
-#     game_id: {
-#         "message": <discord.Message>,
-#         "details": { name, host, slots }
-#     }
-# }
+# Structure: { game_id: { "message": MessageObj, "last_data": dict } }
 announced_games = {}
 
-def discord_timestamp():
-    """Return a Discord-formatted relative timestamp."""
+def get_timestamp():
     return f"<t:{int(datetime.datetime.now().timestamp())}:R>"
 
 @bot.event
 async def on_ready():
-    print(f"[{datetime.datetime.now()}] {bot.user.name} connected.")
-    monitor_game_lobbies.start()
+    print(f"\n[{datetime.datetime.now()}] {bot.user.name} is online and connected.")
+    
+    # --- SMART RECOVERY: Find orphaned messages from before the restart ---
+    channel = bot.get_channel(MONITOR_CHANNEL_ID)
+    if channel:
+        print(f"[{datetime.datetime.now()}] Recovering state from channel history...")
+        async for msg in channel.history(limit=20):
+            # Adopt active messages
+            if msg.author == bot.user and "A LOAP is being hosted!" in msg.content:
+                # Try to extract ID from footer "ID: 12345"
+                for line in msg.content.split('\n'):
+                    if "ID: " in line:
+                        try:
+                            game_id = int(line.split("ID: ")[1].strip())
+                            # Re-construct basic data so the bot knows what this is
+                            announced_games[game_id] = {
+                                "message": msg,
+                                "last_data": {
+                                    "name": "Recovered Game", 
+                                    "host": "Unknown", 
+                                    "slots": "Unknown"
+                                }
+                            }
+                            print(f" > Recovered active game from history. ID: {game_id}")
+                        except:
+                            pass
+    
+    if not monitor_game_lobbies.is_running():
+        monitor_game_lobbies.start()
 
 @tasks.loop(seconds=CHECK_INTERVAL_SECONDS)
 async def monitor_game_lobbies():
-    global announced_games
     print(f"\n[{datetime.datetime.now()}] DEBUG: Running scheduled check...")
-
+    global announced_games
+    
     api_url = "https://api.wc3stats.com/gamelist"
     channel = bot.get_channel(MONITOR_CHANNEL_ID)
-
-    if not channel:
+    if not channel: 
         print("ERROR: Monitor channel not found.")
         return
 
-    # --- Step 1: Fetch hosted games ---
+    # --- Step 1: Fetch API Data ---
     current_hosted_games = {}
-
     try:
         response = requests.get(api_url, timeout=10)
         response.raise_for_status()
@@ -57,88 +76,93 @@ async def monitor_game_lobbies():
 
         for game in api_data.get("body", []):
             game_name = game.get("name", "")
-            if any(keyword.lower() in game_name.lower() for keyword in GAME_KEYWORDS):
-
+            if any(k.lower() in game_name.lower() for k in GAME_KEYWORDS):
                 players = game.get("slotsTaken", 0)
                 game_id = game.get("id")
-
-                if players > 0 and game_id is not None:
+                
+                if game_id is not None and players > 0:
                     current_hosted_games[game_id] = {
                         "name": game_name,
-                        "host": game.get("host", "N/A"),
-                        "slots": f"{players} / {game.get('slotsTotal', 0)}"
+                        "host": game.get("host", "Unknown"),
+                        "slots": f"{players} / {game.get('slotsTotal', 0)}",
+                        "id": game_id
                     }
 
     except Exception as e:
-        print(f"API error: {e}")
+        print(f"API Error: {e}")
         return
 
-    # --- Step 2: Compare sets ---
-    current_game_ids = set(current_hosted_games.keys())
-    announced_game_ids = set(announced_games.keys())
+    # --- Step 2: Handle New Games ---
+    for game_id, game_data in current_hosted_games.items():
+        if game_id not in announced_games:
+            
+            print(f" > Found NEW game: {game_data['name']} (ID: {game_id})")
+            
+            content = (
+                f"🎮 **A LOAP is being hosted!** <@&1364041405919526962>\n"
+                f"> **Name:** {game_data['name']}\n"
+                f"> **Host:** {game_data['host']}\n"
+                f"> **Slots:** {game_data['slots']}\n"
+                f"> **Last updated:** {get_timestamp()}\n"
+                f"> *ID: {game_id}*\n" 
+            )
+            msg = await channel.send(content)
+            announced_games[game_id] = {
+                "message": msg,
+                "last_data": game_data
+            }
 
-    # --- Step 3: Announce new games ---
-    new_game_ids = current_game_ids - announced_game_ids
+    # --- Step 3: Update Ongoing or Ended Games ---
+    known_ids = list(announced_games.keys())
 
-    for game_id in new_game_ids:
-        game = current_hosted_games[game_id]
+    for game_id in known_ids:
+        
+        # === OPTION A: Game is Still Running ===
+        if game_id in current_hosted_games:
+            new_data = current_hosted_games[game_id]
+            stored_data = announced_games[game_id]["last_data"]
+            message = announced_games[game_id]["message"]
 
-        message_content = (
-            f"🎮 **A LOAP is being hosted!** <@&1364041405919526962>\n" ## Adjust Name of hosted lobby
-            f"> **Name:** {game['name']}\n" ## Name of lobby hosted
-            f"> **Host:** {game['host']}\n" ## Will show hosts battlenet name
-            f"> **Slots:** {game['slots']}\n" ## How many slots are taken and available
-            f"> **Last updated:** {discord_timestamp()}" ## Timestamp of when the bot has last ran its checks
-        )
+            # Only edit if SLOTS or HOST changed
+            if new_data['slots'] != stored_data['slots'] or new_data['host'] != stored_data['host']:
+                print(f" > Updating game {game_id}: Slots changed {stored_data['slots']} -> {new_data['slots']}")
+                
+                new_content = (
+                    f"🎮 **A LOAP is being hosted!** <@&1364041405919526962>\n"
+                    f"> **Name:** {new_data['name']}\n"
+                    f"> **Host:** {new_data['host']}\n"
+                    f"> **Slots:** {new_data['slots']}\n"
+                    f"> **Last updated:** {get_timestamp()}\n"
+                    f"> *ID: {game_id}*\n"
+                )
+                try:
+                    await message.edit(content=new_content)
+                    announced_games[game_id]["last_data"] = new_data
+                except discord.NotFound:
+                    print(f" > Message for game {game_id} was deleted manually. Removing from tracker.")
+                    del announced_games[game_id]
 
-        new_message = await channel.send(message_content)
+        # === OPTION B: Game Has Ended ===
+        else:
+            print(f" > Game ended: {game_id}. Updating message to 'Ended'.")
+            game_data = announced_games[game_id]["last_data"]
+            message = announced_games[game_id]["message"]
+            
+            ended_content = (
+                f"❌ **This LOAP is no longer being hosted.**\n"
+                f"> **Name:** {game_data.get('name', 'LOAP')}\n"
+                f"> **Host:** {game_data.get('host', 'Unknown')}\n"
+                f"> **Last updated:** {get_timestamp()}\n"
+                f"> *ID: {game_id}*\n"
+            )
+            try:
+                await message.edit(content=ended_content)
+            except discord.NotFound:
+                print(f" > Could not edit ended message (it was deleted).")
+            
+            # CRITICAL: Remove from memory so it doesn't trigger again
+            del announced_games[game_id]
 
-        announced_games[game_id] = {
-            "message": new_message,
-            "details": game
-        }
+    print(f"DEBUG: Currently tracking {len(announced_games)} active games.")
 
-    # --- Step 4: Update ongoing games ---
-    ongoing_game_ids = announced_game_ids.intersection(current_game_ids)
-
-    for game_id in ongoing_game_ids:
-        game_details = current_hosted_games[game_id]
-        stored = announced_games[game_id]
-        message_to_update = stored["message"]
-
-        new_content = (
-            f"🎮 **A LOAP is being hosted!** <@&1364041405919526962>\n"  ## Adjust Name of hosted lobby
-            f"> **Name:** {game_details['name']}\n" ## Name of lobby hosted
-            f"> **Host:** {game_details['host']}\n" ## Will show hosts battlenet name
-            f"> **Slots:** {game_details['slots']}\n" ## How many slots are taken and available
-            f"> **Last updated:** {discord_timestamp()}\n" ## Timestamp of when the bot has last ran its checks
-        )
-
-        if message_to_update.content != new_content:
-            await message_to_update.edit(content=new_content)
-
-        announced_games[game_id]["details"] = game_details
-
-    # --- Step 5: Mark games that ended ---
-    no_longer_hosted_ids = announced_game_ids - current_game_ids
-
-    for game_id in no_longer_hosted_ids:
-        stored = announced_games[game_id]
-        message_to_update = stored["message"]
-        game_details = stored["details"]
-
-        ended_content = (
-            f"❌ **This LOAP is no longer being hosted.**\n" ## Adjust Name of hosted lobby
-            f"> **Name:** {game_details['name']}\n" ## Name of lobby hosted
-            f"> **Host:** {game_details['host']}\n" ## Will show hosts battlenet name
-            f"> **Last updated:** {discord_timestamp()}\n" ## Timestamp of when the bot has last ran its checks
-        )
-
-        await message_to_update.edit(content=ended_content)
-        del announced_games[game_id]
-
-    print(f"DEBUG: Tracking {len(announced_games)} games.")
-
-# --- RUN THE BOT ---
 bot.run(BOT_TOKEN)
-
